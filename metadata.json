@@ -1,0 +1,7 @@
+{
+  "name": "Agropari - AI Crop Health Management",
+  "description": "AI-powered crop health management system with disease detection, weather risk cross-checking, 10km alert network, interactive hotspot maps, and multilingual IPM advisories.",
+  "requestFramePermissions": ["geolocation", "camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
