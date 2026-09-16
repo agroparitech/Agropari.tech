@@ -25,9 +25,10 @@ GEMINI_API_KEY=your_gemini_api_key
 KINDWISE_API_KEY=your_kindwise_api_key
 PORT=3000
 HOST=127.0.0.1
+VITE_API_URL=
 ```
 
-The Gemini and Kindwise keys are optional. Never commit `.env` or production secrets.
+The Gemini and Kindwise keys are optional. Set `VITE_API_URL` to the public URL of the separately hosted Express API when deploying the frontend to Cloudflare Pages. Leave it empty for local development. Never commit `.env` or production secrets.
 
 ## Development
 
@@ -103,7 +104,7 @@ npm.cmd run deploy:cloudflare
 
 The project includes `wrangler.toml` with `dist` as the Pages output directory.
 
-Cloudflare Pages hosts the Vite frontend only. The current `/api/*` routes run in the Express Node server and therefore need a separate Node-compatible host. Deploy the API separately and configure the frontend/API routing before using authenticated actions, crop analysis, sensor ingestion, or other API-backed features in the Pages deployment.
+Cloudflare Pages hosts the Vite frontend only. The current `/api/*` routes run in the Express Node server and therefore need a separate Node-compatible host. Set `VITE_API_URL` to that API host before building Pages. If the API is temporarily unavailable, crop analysis displays a low-confidence local screening result instead of showing a network popup; API-backed persistence and AI analysis still require the API host.
 
 ## Available scripts
 
