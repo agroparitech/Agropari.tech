@@ -26,9 +26,10 @@ KINDWISE_API_KEY=your_kindwise_api_key
 PORT=3000
 HOST=127.0.0.1
 VITE_API_URL=
+FRONTEND_URL=
 ```
 
-The Gemini and Kindwise keys are optional. Set `VITE_API_URL` to the public URL of the separately hosted Express API when deploying the frontend to Cloudflare Pages. Leave it empty for local development. Never commit `.env` or production secrets.
+The Gemini and Kindwise keys are optional. Set `VITE_API_URL` to the public URL of the separately hosted Express API when deploying the frontend to Cloudflare Pages. Set `FRONTEND_URL` on the API host to the Cloudflare Pages origin. Leave both empty for local development. Never commit `.env` or production secrets.
 
 ## Development
 
