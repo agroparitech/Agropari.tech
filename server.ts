@@ -179,6 +179,7 @@ app.get('/api/cases', (req, res) => {
 // POST analyze crop with AI (Module 1, 2, 3, 4, 9)
 app.post('/api/analyze-crop', async (req, res) => {
   try {
+    const requestBody = req.body && typeof req.body === 'object' ? req.body : {};
     const {
       imageBase64,
       cropName = 'Field Crop',
@@ -190,7 +191,7 @@ app.post('/api/analyze-crop', async (req, res) => {
       weatherSnapshot,
       riskAssessment,
       deviceMetadata
-    } = req.body;
+    } = requestBody;
 
     let diagnosisResult: {
       probableDisease: string;
