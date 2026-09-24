@@ -317,7 +317,7 @@ export const HotspotMapView: React.FC<HotspotMapViewProps> = ({
         <div ref={mapContainerRef} className="absolute inset-0 z-0" />
 
         {/* Legend Overlay on Map (Prompt Module 7 Specification) */}
-        <div className="absolute bottom-5 left-5 z-[1000] bg-white/95 backdrop-blur-sm p-3.5 rounded-xl shadow-lg border border-stone-200 text-xs max-w-xs">
+        <div className="absolute bottom-16 left-4 z-10 bg-white/95 backdrop-blur-sm p-3.5 rounded-xl shadow-lg border border-stone-200 text-xs max-w-xs">
           <div className="font-extrabold text-stone-900 mb-2 flex items-center justify-between">
             <span>Risk Zone Legend</span>
             <span className="text-[10px] text-stone-500 font-normal">Module 7 Spec</span>
@@ -354,7 +354,7 @@ export const HotspotMapView: React.FC<HotspotMapViewProps> = ({
         </div>
 
         {/* Active Outbreak Counter Badge */}
-        <div className="absolute top-4 right-4 z-[1000] bg-stone-900/90 text-white px-3 py-1.5 rounded-xl text-xs font-semibold shadow-md flex items-center gap-2">
+        <div className="absolute top-4 right-4 z-10 bg-stone-900/90 text-white px-3 py-1.5 rounded-xl text-xs font-semibold shadow-md flex items-center gap-2">
           <MapPin className="w-3.5 h-3.5 text-emerald-400" />
           <span>Showing {filteredCases.length} mapped incidents</span>
         </div>
