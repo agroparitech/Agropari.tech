@@ -28,6 +28,7 @@ export const HotspotMapView: React.FC<HotspotMapViewProps> = ({
   const mapInstanceRef = useRef<L.Map | null>(null);
   const layerGroupRef = useRef<L.LayerGroup | null>(null);
   const circleGroupRef = useRef<L.LayerGroup | null>(null);
+  const legendControlRef = useRef<L.Control | null>(null);
 
   const [selectedCrop, setSelectedCrop] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
@@ -93,6 +94,56 @@ export const HotspotMapView: React.FC<HotspotMapViewProps> = ({
         maxZoom: 19
       }).addTo(map);
 
+      const legendControl = L.control({ position: 'bottomleft' });
+      legendControl.onAdd = () => {
+        const div = L.DomUtil.create('div');
+        div.style.cssText = [
+          'background: rgba(255,255,255,0.96)',
+          'backdrop-filter: blur(6px)',
+          'border: 1px solid rgba(214,211,209,0.9)',
+          'border-radius: 12px',
+          'box-shadow: 0 10px 25px rgba(0,0,0,0.08)',
+          'padding: 12px 14px',
+          'font-size: 11px',
+          'color: #1c1917',
+          'max-width: 280px',
+          'line-height: 1.35',
+          'pointer-events: none',
+          'position: relative',
+          'z-index: 500'
+        ].join(';');
+
+        div.innerHTML = `
+          <div style="display:flex;align-items:center;justify-content:space-between;font-weight:800;margin-bottom:8px;gap:6px;">
+            <span style="font-size:12px;">Risk Zone Legend</span>
+            <span style="font-size:10px;color:#78716c;font-weight:500;">Module 7 Spec</span>
+          </div>
+          <div style="display:grid;gap:6px;">
+            <div style="display:flex;align-items:flex-start;gap:8px;">
+              <span style="width:14px;height:14px;border-radius:50%;background:#dc2626;border:2px solid white;display:inline-block;flex-shrink:0;margin-top:1px;"></span>
+              <span><strong>Red (High Risk):</strong> Multiple confirmed / rapid spread</span>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:8px;">
+              <span style="width:14px;height:14px;border-radius:50%;background:#f97316;border:2px solid white;display:inline-block;flex-shrink:0;margin-top:1px;"></span>
+              <span><strong>Orange (Medium Risk):</strong> Confirmed case(s), contained</span>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:8px;">
+              <span style="width:14px;height:14px;border-radius:50%;background:#facc15;border:2px solid white;display:inline-block;flex-shrink:0;margin-top:1px;"></span>
+              <span><strong>Yellow (Low Risk):</strong> 1-2 unconfirmed / &lt;60% conf.</span>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:8px;">
+              <span style="width:14px;height:14px;border-radius:50%;background:#16a34a;border:2px solid white;display:inline-block;flex-shrink:0;margin-top:1px;"></span>
+              <span><strong>Green:</strong> Clean zone / healthy crops</span>
+            </div>
+          </div>
+          <div style="margin-top:8px;padding-top:6px;border-top:1px solid #e7e5e4;font-size:10px;color:#57534e;">Dashed ring = 10 km notification radius</div>
+        `;
+
+        return div;
+      };
+      legendControl.addTo(map);
+      legendControlRef.current = legendControl;
+
       const layers = L.layerGroup().addTo(map);
       const circles = L.layerGroup().addTo(map);
       layerGroupRef.current = layers;
@@ -101,6 +152,11 @@ export const HotspotMapView: React.FC<HotspotMapViewProps> = ({
     }
 
     return () => {
+      if (legendControlRef.current) {
+        legendControlRef.current.remove();
+        legendControlRef.current = null;
+      }
+
       if (mapInstanceRef.current) {
         mapInstanceRef.current.remove();
         mapInstanceRef.current = null;
@@ -313,48 +369,11 @@ export const HotspotMapView: React.FC<HotspotMapViewProps> = ({
       </div>
 
       {/* Map Canvas */}
-      <div className="relative flex-1 w-full h-full min-h-[480px] z-0">
+      <div className="relative flex-1 w-full h-full min-h-[480px] isolate">
         <div ref={mapContainerRef} className="absolute inset-0 z-0" />
 
-        {/* Legend Overlay on Map (Prompt Module 7 Specification) */}
-        <div className="absolute top-4 left-4 z-[1] bg-white/95 backdrop-blur-sm p-3.5 rounded-xl shadow-lg border border-stone-200 text-xs max-w-xs">
-          <div className="font-extrabold text-stone-900 mb-2 flex items-center justify-between">
-            <span>Risk Zone Legend</span>
-            <span className="text-[10px] text-stone-500 font-normal">Module 7 Spec</span>
-          </div>
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-2">
-              <span className="w-3.5 h-3.5 rounded-full bg-red-600 border border-white shrink-0 shadow-sm"></span>
-              <span className="text-stone-700">
-                <strong>Red (High Risk):</strong> Multiple confirmed / rapid spread
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-3.5 h-3.5 rounded-full bg-orange-500 border border-white shrink-0 shadow-sm"></span>
-              <span className="text-stone-700">
-                <strong>Orange (Medium Risk):</strong> Confirmed case(s), contained
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-3.5 h-3.5 rounded-full bg-yellow-400 border border-white shrink-0 shadow-sm"></span>
-              <span className="text-stone-700">
-                <strong>Yellow (Low Risk):</strong> 1-2 unconfirmed / &lt;60% conf.
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-3.5 h-3.5 rounded-full bg-emerald-600 border border-white shrink-0 shadow-sm"></span>
-              <span className="text-stone-700">
-                <strong>Green:</strong> Clean zone / healthy crops
-              </span>
-            </div>
-          </div>
-          <div className="mt-2.5 pt-2 border-t border-stone-200 text-[11px] text-stone-500 flex items-center justify-between">
-            <span>Dashed ring = 10 km notification radius</span>
-          </div>
-        </div>
-
         {/* Active Outbreak Counter Badge */}
-        <div className="absolute top-4 right-4 z-[2] bg-stone-900/90 text-white px-3 py-1.5 rounded-xl text-xs font-semibold shadow-md flex items-center gap-2">
+        <div className="absolute top-4 right-4 z-[1000] bg-stone-900/90 text-white px-3 py-1.5 rounded-xl text-xs font-semibold shadow-md flex items-center gap-2">
           <MapPin className="w-3.5 h-3.5 text-emerald-400" />
           <span>Showing {filteredCases.length} mapped incidents</span>
         </div>

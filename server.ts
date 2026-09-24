@@ -217,6 +217,21 @@ app.post('/api/analyze-crop', async (req, res) => {
       deviceMetadata
     } = requestBody;
 
+    if (typeof imageBase64 !== 'string' || !imageBase64.startsWith('data:image/')) {
+      return res.status(400).json({
+        status: 'invalid_image',
+        message: 'Please upload a valid crop image.'
+      });
+    }
+
+    const ai = getGeminiClient();
+    if (!ai) {
+      return res.status(503).json({
+        status: 'analysis_unavailable',
+        message: 'Crop image analysis is unavailable. Configure GEMINI_API_KEY and restart the API server.'
+      });
+    }
+
     let diagnosisResult: {
       probableDisease: string;
       confidence: number;
@@ -237,10 +252,8 @@ app.post('/api/analyze-crop', async (req, res) => {
       };
     } | null = null;
 
-    const ai = getGeminiClient();
-
     // 1. Attempt Gemini Multimodal Vision if API Key is configured
-    if (ai && imageBase64) {
+    if (imageBase64) {
       try {
         // Strip data:image/...;base64, if present
         let cleanBase64 = imageBase64;
@@ -253,17 +266,18 @@ app.post('/api/analyze-crop', async (req, res) => {
         }
 
         const prompt = `You are a world-class agronomist and plant pathologist working on the Agropari Crop Health Management System in India.
-Analyze this plant leaf/crop image carefully.
+Analyze the provided image in two stages. First, evaluate whether the image displays a real plant leaf or crop foliage. If it shows a car, face, person, animal, building, food, screenshot, random object, or any non-leaf image, return status: "NOT_A_LEAF" and stop. Only if a valid plant leaf or crop foliage is present, analyze the pathological symptoms.
 Context:
 Crop: ${cropName} (Variety: ${cropVariety}, Stage: ${growthStage})
 Location: Lat ${location.latitude}, Lon ${location.longitude}, District: ${location.district || 'Rural India'}
 Live Weather: Temp ${weatherSnapshot?.temperature || 28}°C, Humidity ${weatherSnapshot?.humidity || 75}%, Rainfall ${weatherSnapshot?.rainfall || 0}mm.
 
 CRITICAL IPM & SAFETY RULES:
-1. Identify the probable disease, pest, or deficiency (or Healthy Crop).
-2. Assign confidence integer percentage (0-100). If uncertain or ambiguous, keep confidence < 60.
-3. Provide top 3 differential diagnoses (alternatives).
-4. Provide structured Integrated Pest Management (IPM) in standard sequencing:
+1. Return is_plant as a probability from 0 to 1. A valid leaf requires is_plant >= 0.70.
+2. Identify the probable disease, pest, or deficiency (or Healthy Crop) only for a valid leaf.
+3. Assign confidence integer percentage (0-100). If uncertain or ambiguous, keep confidence below 60.
+4. Provide top 3 differential diagnoses (alternatives).
+5. Provide structured Integrated Pest Management (IPM) in standard sequencing:
    - monitoringSteps (list of strings)
    - culturalControls (list of strings)
    - biologicalControls (list of strings, e.g. Trichoderma, Pseudomonas, neem, pheromones)
@@ -273,6 +287,8 @@ CRITICAL IPM & SAFETY RULES:
 
 Return ONLY valid JSON matching this exact schema:
 {
+  "status": "VALID_LEAF"|"NOT_A_LEAF",
+  "is_plant": 0.0,
   "probableDisease": "string",
   "confidence": number,
   "top3Alternatives": [
@@ -354,6 +370,18 @@ Return ONLY valid JSON matching this exact schema:
           const rawText = response.text.trim();
           const cleanJson = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/, '').trim();
           const parsed = JSON.parse(cleanJson);
+          const isPlantProbability = Number(parsed.is_plant ?? parsed.isPlant);
+          if (parsed.status === 'NOT_A_LEAF' || !Number.isFinite(isPlantProbability) || isPlantProbability < 0.70) {
+            return res.status(422).json({
+              status: 'invalid_image',
+              message: 'No crop leaf detected. Please upload a clear photo of an affected plant leaf.'
+            });
+          }
+
+          if (parsed.status !== 'VALID_LEAF' || !parsed.probableDisease || parsed.confidence === undefined) {
+            throw new Error('Vision model returned an invalid leaf-screening response');
+          }
+
           if (parsed.probableDisease && parsed.confidence !== undefined) {
             // Normalize top3Alternatives to ensure object structure matches client expectation
             if (Array.isArray(parsed.top3Alternatives)) {
@@ -382,84 +410,31 @@ Return ONLY valid JSON matching this exact schema:
             parsed.ipmAdvisory.mechanicalControls = Array.isArray(parsed.ipmAdvisory.mechanicalControls) ? parsed.ipmAdvisory.mechanicalControls : [];
             parsed.ipmAdvisory.chemicalControls = Array.isArray(parsed.ipmAdvisory.chemicalControls) ? parsed.ipmAdvisory.chemicalControls : [];
 
+            parsed.confidence = Math.max(0, Math.min(100, Number(parsed.confidence)));
+
             diagnosisResult = parsed;
           }
         }
       } catch (geminiErr: any) {
-        console.log('Gemini model unavailable or timed out; activating intelligent agronomic diagnostic engine.');
+        console.log('Gemini model unavailable or returned an invalid response; routing to safe review fallback.');
       }
     }
 
-    // 2. Intelligent Agronomic Fallback Engine if Gemini unavailable or not configured
+    // Do not create a case when all vision models fail. The client receives a structured error.
     if (!diagnosisResult) {
-      // Select best vetted match based on crop name and weather risk
-      const isPotato = cropName.toLowerCase().includes('potato');
-      const isTomato = cropName.toLowerCase().includes('tomato');
-      const isPaddy = cropName.toLowerCase().includes('paddy') || cropName.toLowerCase().includes('rice');
-      const isCotton = cropName.toLowerCase().includes('cotton');
-
-      let defaultDisease = 'Early Blight';
-      let confidence = 82;
-      let pathogenType: 'fungal' | 'bacterial' | 'viral' | 'pest' | 'nutritional' | 'healthy' = 'fungal';
-
-      if (isPotato) {
-        defaultDisease = (weatherSnapshot?.humidity || 70) > 80 ? 'Late Blight' : 'Early Blight';
-        confidence = 86;
-      } else if (isPaddy) {
-        defaultDisease = 'Bacterial Leaf Blight';
-        pathogenType = 'bacterial';
-        confidence = 79;
-      } else if (isCotton) {
-        defaultDisease = (weatherSnapshot?.humidity || 70) < 60 ? 'Pink Bollworm' : 'Bacterial Leaf Blight';
-        pathogenType = defaultDisease === 'Pink Bollworm' ? 'pest' : 'bacterial';
-        confidence = 58; // Flag for expert review example
-      } else if (isTomato) {
-        defaultDisease = 'Early Blight';
-        confidence = 84;
-      }
-
-      const vettedInfo = VETTED_PESTICIDE_REGISTRY[defaultDisease] || VETTED_PESTICIDE_REGISTRY['Early Blight'];
-
-      diagnosisResult = {
-        probableDisease: defaultDisease,
-        confidence,
-        top3Alternatives: [
-          { diseaseName: defaultDisease, confidence, pathogenType },
-          { diseaseName: 'Septoria Leaf Spot', confidence: 100 - confidence - 6, pathogenType: 'fungal' },
-          { diseaseName: 'Potassium Deficiency Chlorosis', confidence: 6, pathogenType: 'nutritional' }
-        ],
-        description: `Visual leaf examination indicates symptoms characteristic of ${defaultDisease}, characterized by necrotic lesions and progressive foliage chlorosis under current micro-climate conditions.`,
-        ipmAdvisory: {
-          monitoringSteps: [
-            `Scout field twice a week in early morning to detect initial symptoms on ${cropName} leaves.`,
-            'Inspect at least 20 random plants across four quadrants of the plot.'
-          ],
-          culturalControls: [
-            'Maintain optimal spacing and weed-free field borders to facilitate air circulation.',
-            'Avoid excessive nitrogen fertilizer application which promotes lush, susceptible foliage.',
-            'Adopt drip irrigation or furrow watering to minimize canopy moisture duration.'
-          ],
-          biologicalControls: [
-            vettedInfo.biologicalAlt,
-            'Neem seed kernel extract (NSKE 5%) or cold-pressed neem oil (10,000 ppm) @ 3ml/L water.'
-          ],
-          mechanicalControls: [
-            'Prune and safely destroy heavily infected lower leaves away from irrigation channels.'
-          ],
-          chemicalControls: [
-            {
-              activeIngredientClass: vettedInfo.activeClass,
-              recommendedTarget: defaultDisease,
-              dosageGuidelines: vettedInfo.dosage,
-              preHarvestIntervalDays: vettedInfo.phiDays,
-              safetyPrecautions: vettedInfo.safetyNote
-            }
-          ]
-        }
-      };
+      return res.status(503).json({
+        status: 'analysis_unavailable',
+        message: 'Crop image analysis could not be completed. Please try again or send the image to an agronomist for review.'
+      });
     }
 
-    const needsExpertReview = diagnosisResult.confidence < 60;
+    const isLowConfidence = diagnosisResult.confidence < 60;
+    const needsExpertReview = isLowConfidence;
+    if (isLowConfidence) {
+      diagnosisResult.probableDisease = 'Low Confidence / Ambiguous';
+      diagnosisResult.description = `The image appears to show crop foliage, but the disease signal is ambiguous (${diagnosisResult.confidence}% confidence). An agronomist must verify the diagnosis before treatment.`;
+      diagnosisResult.ipmAdvisory.chemicalControls = [];
+    }
     const newCaseId = `case-${Date.now()}`;
 
     const newCase: CropCase = {

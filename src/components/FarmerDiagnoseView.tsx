@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Camera,
   Upload,
@@ -48,59 +48,6 @@ interface FarmerDiagnoseViewProps {
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 
-function createLocalDiagnosis(
-  imageBase64: string,
-  cropName: string,
-  cropVariety: string,
-  growthStage: CropCase['growthStage'],
-  farmerName: string,
-  farmerPhone: string,
-  location: LocationCoords,
-  weatherSnapshot: WeatherCondition | null,
-  riskAssessment: AgronomicRiskAssessment | null,
-  deviceMetadata: CropCase['deviceMetadata']
-): CropCase {
-  const normalizedCrop = cropName.toLowerCase();
-  const probableDisease = normalizedCrop.includes('paddy') || normalizedCrop.includes('rice')
-    ? 'Bacterial Leaf Blight'
-    : normalizedCrop.includes('potato') && (weatherSnapshot?.humidity || 70) > 80
-      ? 'Late Blight'
-      : 'Early Blight';
-  const pathogenType: 'fungal' | 'bacterial' = probableDisease === 'Bacterial Leaf Blight' ? 'bacterial' : 'fungal';
-
-  return {
-    id: `local-case-${Date.now()}`,
-    farmerName,
-    farmerPhone,
-    cropName,
-    cropVariety,
-    growthStage,
-    imageUrl: imageBase64,
-    timestamp: new Date().toISOString(),
-    location,
-    probableDisease,
-    confidence: 58,
-    needsExpertReview: true,
-    status: 'auto_diagnosed',
-    top3Alternatives: [
-      { diseaseName: probableDisease, confidence: 58, pathogenType },
-      { diseaseName: 'Septoria Leaf Spot', confidence: 25, pathogenType: 'fungal' },
-      { diseaseName: 'Nutritional Deficiency', confidence: 17, pathogenType: 'nutritional' }
-    ],
-    description: `Offline screening suggests ${probableDisease}. Connect to the Agropari API for AI image analysis and expert review.`,
-    ipmAdvisory: {
-      monitoringSteps: ['Inspect 20 plants across the field twice weekly.', 'Record whether lesions are spreading after irrigation or rainfall.'],
-      culturalControls: ['Improve canopy airflow and avoid overhead irrigation.', 'Remove severely affected leaves and keep field borders weed-free.'],
-      biologicalControls: ['Use locally approved biological controls according to label instructions.'],
-      mechanicalControls: ['Collect and destroy heavily affected plant material away from the field.'],
-      chemicalControls: []
-    },
-    weatherSnapshot: weatherSnapshot || undefined,
-    riskAssessment: riskAssessment || undefined,
-    deviceMetadata
-  };
-}
-
 export const FarmerDiagnoseView: React.FC<FarmerDiagnoseViewProps> = ({
   currentLanguage,
   onCaseCreated,
@@ -143,6 +90,8 @@ export const FarmerDiagnoseView: React.FC<FarmerDiagnoseViewProps> = ({
   // Diagnosis State
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
   const [activeDiagnosis, setActiveDiagnosis] = useState<CropCase | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const analysisRequestIdRef = useRef<number>(0);
 
   // Audio / TTS State
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
@@ -213,6 +162,8 @@ export const FarmerDiagnoseView: React.FC<FarmerDiagnoseViewProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    setActiveDiagnosis(null);
+    setAnalysisError(null);
     setIsCompressing(true);
     try {
       const result = await compressImageClientSide(file, 1024, 0.78);
@@ -226,11 +177,14 @@ export const FarmerDiagnoseView: React.FC<FarmerDiagnoseViewProps> = ({
       console.error('Image compression failed:', err);
     } finally {
       setIsCompressing(false);
+      e.target.value = '';
     }
   };
 
   // Handle direct snapshot capture from live webcam/camera stream
   const handleLiveCameraCapture = async (dataUrl: string) => {
+    setActiveDiagnosis(null);
+    setAnalysisError(null);
     setIsCompressing(true);
     try {
       const res = await fetch(dataUrl);
@@ -298,6 +252,9 @@ export const FarmerDiagnoseView: React.FC<FarmerDiagnoseViewProps> = ({
       return;
     }
 
+    const requestId = ++analysisRequestIdRef.current;
+    setActiveDiagnosis(null);
+    setAnalysisError(null);
     setIsAnalyzing(true);
     try {
       const payload = {
@@ -327,36 +284,40 @@ export const FarmerDiagnoseView: React.FC<FarmerDiagnoseViewProps> = ({
         body: JSON.stringify(payload)
       });
 
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(`Server returned ${res.status}`);
+        const structuredMessage = typeof data.message === 'string' ? data.message : `Server returned ${res.status}`;
+        const structuredStatus = typeof data.status === 'string' ? data.status : 'analysis_error';
+        throw new Error(`${structuredStatus}:${structuredMessage}`);
       }
 
-      const data = await res.json();
+      if (requestId !== analysisRequestIdRef.current) {
+        return;
+      }
+
       if (data.case) {
         setActiveDiagnosis(data.case);
         onCaseCreated(data.case);
       }
     } catch (err: any) {
-      console.error('Analysis API unavailable; using local diagnosis:', err);
-      const fallbackCase = createLocalDiagnosis(
-        selectedImage,
-        cropName,
-        cropVariety,
-        growthStage,
-        farmerName,
-        farmerPhone,
-        userCoords || { latitude: 28.6139, longitude: 77.209, accuracy: 25, district: 'Local District' },
-        weather,
-        riskAssessment,
-        {
-          userAgent: navigator.userAgent,
-          connectionType: (navigator as any).connection?.effectiveType || 'cellular'
-        }
-      );
-      setActiveDiagnosis(fallbackCase);
-      onCaseCreated(fallbackCase);
+      if (requestId !== analysisRequestIdRef.current) {
+        return;
+      }
+
+      const errorMessage = err instanceof Error ? err.message : 'Crop analysis failed.';
+      const separatorIndex = errorMessage.indexOf(':');
+      const errorStatus = separatorIndex > 0 ? errorMessage.slice(0, separatorIndex) : 'analysis_error';
+      const message = separatorIndex > 0 ? errorMessage.slice(separatorIndex + 1) : errorMessage;
+      console.error('Crop analysis failed:', err);
+      setAnalysisError(errorStatus === 'invalid_image'
+        ? message
+        : errorStatus === 'analysis_unavailable'
+        ? message
+        : 'Crop analysis failed. Please try again with a clear, well-lit leaf photo.');
     } finally {
-      setIsAnalyzing(false);
+      if (requestId === analysisRequestIdRef.current) {
+        setIsAnalyzing(false);
+      }
     }
   };
 
@@ -765,6 +726,12 @@ export const FarmerDiagnoseView: React.FC<FarmerDiagnoseViewProps> = ({
           </div>
         )}
       </div>
+
+      {analysisError && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900" role="alert">
+          {analysisError}
+        </div>
+      )}
 
       {/* SECTION 4: DIAGNOSIS & MULTILINGUAL IPM ADVISORY (MODULES 1, 8, 9) */}
       {activeDiagnosis && (
